@@ -78,18 +78,37 @@ class Player:
             if JUMP_SOUND:
                 JUMP_SOUND.play()
 
-    def update(self, scroll_speed):
+    def update(self, pits):
         # 重力
         self.vy += 0.6
         self.y += self.vy
 
         # 地面判定
-        base_h = self.height // 2 if self.ducking else self.height
-        if self.y >= GROUND_Y - base_h:
-            self.y = GROUND_Y - base_h
-            self.vy = 0
-            self.on_ground = True
-            self.jump_count = 0
+
+        player_center_x = self.x + self.width // 2
+        over_pit = False
+        for pit in pits:
+            if pit.x < player_center_x < pit.x + pit.width:
+                over_pit = True
+                break
+        if over_pit:
+            if self.on_ground:
+                self.vy = 0
+            self.on_ground = False
+        
+        else:
+            if self.y >= GROUND_Y:
+                self.y = GROUND_Y
+                self.vy = 0
+                self.on_ground = True
+                self.jump_count = 0
+
+            else:
+                self.on_ground = False
+
+        #画面外に落ちたら死亡
+        if self.y > HEIGHT:
+            self.alive = False
 
         # 簡易アニメーション（フレーム増加で車輪を回すような表示にできる）
         self.frame_timer += 1
@@ -135,6 +154,23 @@ class Obstacle:
 
     def draw(self, surf):
         pygame.draw.rect(surf, self.color, self.rect)
+
+# ----------------------------
+# 落とし穴クラス
+# ----------------------------
+class Pit:
+    def __init__(self, x, width):
+        self.x = x
+        self.width = width
+        self.y = GROUND_Y  # 地面と同じ位置
+
+    def update(self, speed):
+        self.x -= speed
+
+    def draw(self, surf):
+        # 穴の部分を黒っぽく塗る
+        pygame.draw.rect(surf, (0, 0, 0), (self.x, self.y, self.width, HEIGHT - self.y))
+        pygame.draw.line(surf, (255,255,255), (self.x, self.y), (self.x + self.width, self.y), 2)
 
 
 # ----------------------------
@@ -203,6 +239,12 @@ def spawn_obstacle(next_x):
     else:
         # 何も（偶に空）
         return None
+    
+def spawn_pit(next_x):
+    if random.random() < 0.1:
+        width = random.randint(120, 200)
+        return Pit(next_x, width)
+    return None
 
 def spawn_coin(x):
     # 地面より上に浮かせて配置
@@ -220,6 +262,7 @@ def game_loop():
     player = Player(140, GROUND_Y - 48)
     ground = Ground()
     obstacles = []
+    pits = []
     coins = []
     distance = 0.0
     score = 0
@@ -235,6 +278,7 @@ def game_loop():
         if ob:
             obstacles.append(ob)
         next_x += random.randint(220, 350)
+
 
     # ゲームループ
     running = True
@@ -264,18 +308,23 @@ def game_loop():
 
         if not game_over:
             # スピードは距離に応じて少しだけ速くなる
-            speed += distance * SPEED_INCREASE_RATE
+            speed += SPEED_INCREASE_RATE
 
             # 背景移動
             ground.update(speed)
 
             # プレイヤー更新
-            player.update(speed)
+            player.update(pits)
 
             # 障害物更新
             for ob in obstacles:
                 ob.update(speed)
             obstacles = [o for o in obstacles if o.x + o.w > -50]  # 画面外消す
+
+            # 落とし穴更新
+            for pit in pits:
+                pit.update(speed)
+            pits = [p for p in pits if p.x + p.width > -50]
 
             # コイン更新
             for c in coins:
@@ -291,6 +340,21 @@ def game_loop():
                         HIT_SOUND.play()
                     break
 
+            # 落とし穴判定
+            for pit in pits:
+                # プレイヤーの中心が穴の範囲内に入ったら落下
+                player_center_x = player.rect.centerx
+                if pit.x < player_center_x < pit.x + pit.width:
+                    # 落ちる
+                    player.vy += 1.5  # 重力強めて落下
+                    if player.y > HEIGHT:  # 画面外に落ちたら終了
+                        game_over = True
+                        player.alive = False
+                        if HIT_SOUND:
+                            HIT_SOUND.play()
+                    break
+
+
             # 当たり判定：コイン
             for c in coins:
                 if player.rect.colliderect(c.rect) and not c.collected:
@@ -305,9 +369,14 @@ def game_loop():
                 # 次の障害物までのX
                 spawn_x = WIDTH + random.randint(0, 200)
                 ob = spawn_obstacle(spawn_x)
-                if ob:
-                    obstacles.append(ob)
+                if ob: obstacles.append(ob)
+                pit = spawn_pit(WIDTH + random.randint(200,400))
+                if pit: pits.append(pit)
+
                 spawn_timer = 0
+
+
+
 
             coin_timer += 1
             if coin_timer > 120:
@@ -320,9 +389,18 @@ def game_loop():
         SCREEN.fill(SKY)
         ground.draw(SCREEN)
 
+        for pit in pits:
+            pit.draw(SCREEN)
+
+
         # 障害物描画
         for ob in obstacles:
             ob.draw(SCREEN)
+
+        #落し穴描画
+        for pit in pits:
+            pit.draw(SCREEN)
+            pygame.draw.line(SCREEN, (255, 255, 255), (pit.x, GROUND_Y), (pit.x + pit.width, GROUND_Y), 2)
 
         # コイン描画
         for c in coins:
